@@ -1,0 +1,182 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Sales Forecasting — Time Series (ARIMA & LSTM)\n",
+    "**Dataset:** Superstore Sales (Kaggle)  \n",
+    "**Goal:** Forecast monthly sales using ARIMA and LSTM to support inventory planning"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import numpy as np\n",
+    "import pandas as pd\n",
+    "import matplotlib.pyplot as plt\n",
+    "from statsmodels.tsa.arima.model import ARIMA\n",
+    "from statsmodels.tsa.seasonal import seasonal_decompose\n",
+    "from sklearn.preprocessing import MinMaxScaler\n",
+    "from sklearn.metrics import mean_squared_error\n",
+    "from tensorflow.keras.models import Sequential\n",
+    "from tensorflow.keras.layers import LSTM, Dense\n",
+    "import warnings\n",
+    "warnings.filterwarnings('ignore')"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 1. Load & Prepare Data\n",
+    "Download from: https://www.kaggle.com/datasets/vivek468/superstore-dataset-final"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "df = pd.read_csv('Sample - Superstore.csv', encoding='latin-1')\n",
+    "df['Order Date'] = pd.to_datetime(df['Order Date'])\n",
+    "\n",
+    "# Aggregate to monthly sales\n",
+    "monthly = df.resample('M', on='Order Date')['Sales'].sum()\n",
+    "print(f\"Monthly records: {len(monthly)}\")\n",
+    "monthly.tail()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 2. Trend & Seasonality Analysis"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "decomp = seasonal_decompose(monthly, model='additive', period=12)\n",
+    "fig = decomp.plot()\n",
+    "fig.set_size_inches(12, 8)\n",
+    "plt.tight_layout()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 3. ARIMA Forecast"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "train_size = int(len(monthly) * 0.8)\n",
+    "train, test = monthly[:train_size], monthly[train_size:]\n",
+    "\n",
+    "model_arima = ARIMA(train, order=(2, 1, 2))\n",
+    "arima_fit = model_arima.fit()\n",
+    "arima_pred = arima_fit.forecast(steps=len(test))\n",
+    "\n",
+    "arima_rmse = np.sqrt(mean_squared_error(test, arima_pred))\n",
+    "print(f\"ARIMA RMSE: {arima_rmse:.2f}\")\n",
+    "\n",
+    "plt.figure(figsize=(12, 4))\n",
+    "plt.plot(train.index, train, label='Train')\n",
+    "plt.plot(test.index, test, label='Actual', color='black')\n",
+    "plt.plot(test.index, arima_pred, label='ARIMA Forecast', color='orange')\n",
+    "plt.title('ARIMA Sales Forecast')\n",
+    "plt.legend()\n",
+    "plt.tight_layout()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 4. LSTM Forecast"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "scaler = MinMaxScaler()\n",
+    "scaled = scaler.fit_transform(monthly.values.reshape(-1, 1))\n",
+    "\n",
+    "def create_sequences(data, window=6):\n",
+    "    X, y = [], []\n",
+    "    for i in range(window, len(data)):\n",
+    "        X.append(data[i-window:i, 0])\n",
+    "        y.append(data[i, 0])\n",
+    "    return np.array(X), np.array(y)\n",
+    "\n",
+    "X, y = create_sequences(scaled)\n",
+    "split = int(len(X) * 0.8)\n",
+    "X_train, X_test = X[:split].reshape(-1, 6, 1), X[split:].reshape(-1, 6, 1)\n",
+    "y_train, y_test = y[:split], y[split:]\n",
+    "\n",
+    "model_lstm = Sequential([\n",
+    "    LSTM(32, input_shape=(6, 1)),\n",
+    "    Dense(1)\n",
+    "])\n",
+    "model_lstm.compile(optimizer='adam', loss='mse')\n",
+    "model_lstm.fit(X_train, y_train, epochs=20, batch_size=8, verbose=0)\n",
+    "\n",
+    "lstm_pred = scaler.inverse_transform(model_lstm.predict(X_test))\n",
+    "y_test_inv = scaler.inverse_transform(y_test.reshape(-1, 1))\n",
+    "lstm_rmse = np.sqrt(mean_squared_error(y_test_inv, lstm_pred))\n",
+    "print(f\"LSTM RMSE: {lstm_rmse:.2f}\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 5. Model Comparison"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "print(f\"ARIMA RMSE : {arima_rmse:.2f}\")\n",
+    "print(f\"LSTM  RMSE : {lstm_rmse:.2f}\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Conclusion\n",
+    "- Clear **seasonality** observed in Q4 each year — aligns with holiday sales peaks.\n",
+    "- ARIMA is fast and interpretable; LSTM adapts better to irregular patterns.\n",
+    "- Forecasts can guide **inventory stocking** and **staffing** decisions ahead of demand spikes."
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+  "language_info": {"name": "python", "version": "3.10.0"}
+ },
+ "nbformat": 4,
+ "nbformat_minor": 4
+}
